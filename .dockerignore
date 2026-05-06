@@ -1,0 +1,9 @@
+target
+vendor
+**/*.gguf
+**/*.safetensors
+.git
+.idea
+.vscode
+*.md
+!README.md

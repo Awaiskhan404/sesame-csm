@@ -1,0 +1,5 @@
+/target
+/vendor
+*.safetensors
+*.gguf
+.DS_Store
