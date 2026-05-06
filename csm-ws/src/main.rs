@@ -1,4 +1,6 @@
 mod audio;
+mod generation;
+mod http;
 mod pool;
 mod protocol;
 mod session;
@@ -10,14 +12,15 @@ use axum::{
     extract::{ws::WebSocketUpgrade, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use clap::Parser;
 use csm_rs::GeneratorArgs;
+use generation::GenParams;
 use pool::GeneratorPool;
 use serde::Deserialize;
-use session::{GenParams, Session};
+use session::Session;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use voices::VoiceMap;
 
@@ -54,12 +57,21 @@ struct Args {
     pool_size: usize,
     #[arg(long, env = "VOICES_FILE", help = "JSON file mapping voice_id strings to numeric speaker ids.")]
     voices_file: Option<PathBuf>,
+
+    #[arg(long, default_value_t = 10_000.0, env = "REST_MAX_AUDIO_LEN_MS",
+        help = "Default max audio length (ms) for REST endpoints. Caps runaway generations on short utterances. Body can override.")]
+    rest_max_audio_len_ms: f32,
+    #[arg(long, default_value_t = 30_000.0, env = "WS_MAX_AUDIO_LEN_MS",
+        help = "Default max audio length (ms) for WebSocket sessions.")]
+    ws_max_audio_len_ms: f32,
 }
 
-struct AppState {
-    pool: GeneratorPool,
-    voices: VoiceMap,
-    api_key: Option<String>,
+pub struct AppState {
+    pub pool: GeneratorPool,
+    pub voices: VoiceMap,
+    pub api_key: Option<String>,
+    pub rest_max_audio_len_ms: f32,
+    pub ws_max_audio_len_ms: f32,
 }
 
 fn parse_dtype(s: &str) -> Result<candle_core::DType> {
@@ -114,6 +126,8 @@ async fn main() -> Result<()> {
         pool,
         voices,
         api_key: args.api_key,
+        rest_max_audio_len_ms: args.rest_max_audio_len_ms,
+        ws_max_audio_len_ms: args.ws_max_audio_len_ms,
     });
 
     let app = Router::new()
@@ -122,10 +136,24 @@ async fn main() -> Result<()> {
             "/v1/text-to-speech/{voice_id}/stream-input",
             get(ws_handler),
         )
+        .route(
+            "/v1/text-to-speech/{voice_id}",
+            post(http::tts_full),
+        )
+        .route(
+            "/v1/text-to-speech/{voice_id}/stream",
+            post(http::tts_stream),
+        )
+        .route(
+            "/v1/text-to-speech/{voice_id}/stream/with-timestamps",
+            post(http::tts_stream_timestamps),
+        )
         .with_state(state);
 
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
-    log::info!("Listening on ws://{}/v1/text-to-speech/{{voice_id}}/stream-input", addr);
+    log::info!("Listening on http://{}", addr);
+    log::info!("  WebSocket: ws://{}/v1/text-to-speech/{{voice_id}}/stream-input", addr);
+    log::info!("  REST:      POST http://{}/v1/text-to-speech/{{voice_id}}[/stream|/stream/with-timestamps]", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
@@ -180,6 +208,7 @@ async fn ws_handler(
     };
 
     let mut params = GenParams::defaults(speaker_id);
+    params.max_audio_len_ms = state.ws_max_audio_len_ms;
     if let Some(s) = q.speaker_id {
         params.speaker_id = s;
     }
@@ -196,13 +225,7 @@ async fn ws_handler(
     let state = state.clone();
     ws.on_upgrade(move |socket| async move {
         let guard = state.pool.checkout().await;
-        let session = match Session::new(socket, guard, format, params) {
-            Ok(s) => s,
-            Err(e) => {
-                log::error!("session init failed: {e}");
-                return;
-            }
-        };
+        let session = Session::new(socket, guard, format, params);
         if let Err(e) = session.run().await {
             log::warn!("session ended with error: {e}");
         }

@@ -8,6 +8,11 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     gcc-10 \
     g++-10 \
+    autoconf \
+    automake \
+    libtool \
+    nasm \
+    make \
     && rm -rf /var/lib/apt/lists/*
 
 ENV CC=gcc-10 \

@@ -60,6 +60,8 @@ Models are pulled from the Hugging Face Hub on first use and cached under
 | `--model-id` | none | HF Hub model id. |
 | `--weights-path` | none | Local `.safetensors` or `.gguf`. Highest precedence. |
 | `--voices-file` | none | JSON file mapping `voice_id` strings to numeric speaker ids. |
+| `--rest-max-audio-len-ms` | `10000` | Default max audio length for REST. CSM-1B sometimes forgets to emit end-of-generation; this caps runaway output on short utterances. Body can override via `max_audio_len_ms`. |
+| `--ws-max-audio-len-ms` | `30000` | Same, for WebSocket sessions (longer default for conversational turns). |
 
 ### Voice map file (`--voices-file`)
 
@@ -74,6 +76,94 @@ Models are pulled from the Hugging Face Hub on first use and cached under
 Without this flag, the defaults `default`, `speaker_0`..`speaker_3` are
 recognized, plus any numeric `voice_id` (`"0"`, `"1"`, ...) passes through.
 
+## Output formats
+
+All endpoints accept `?output_format=<fmt>`:
+
+| Format | Codec | Sample rate | Container | Notes |
+|--------|-------|-------------|-----------|-------|
+| `pcm_16000` | s16 LE PCM | 16 kHz | none (raw) | |
+| `pcm_22050` | s16 LE PCM | 22.05 kHz | none (raw) | |
+| `pcm_24000` | s16 LE PCM | 24 kHz | none (raw) | **CSM's native rate, no resample** |
+| `pcm_44100` | s16 LE PCM | 44.1 kHz | none (raw) | |
+| `ulaw_8000` | μ-law (G.711) | 8 kHz | none (raw) | **Twilio Media Streams** |
+| `wav_16000` / `_22050` / `_24000` / `_44100` | s16 LE PCM | as named | WAV (streamable header) | |
+| `mp3_22050_32` | MP3 | 22.05 kHz | MP3 | 32 kbps |
+| `mp3_44100_32` / `_64` / `_96` / `_128` / `_192` | MP3 | 44.1 kHz | MP3 | as named |
+
+Default if `output_format` is omitted: WebSocket → `pcm_24000`, REST → `mp3_44100_128` (matches ElevenLabs).
+
+WAV streams use a "streaming header" with `0xFFFFFFFF` length fields — `ffmpeg`,
+`ffplay`, and browsers all play them; Windows Media Player may complain.
+
+## REST API
+
+ElevenLabs-shaped HTTP endpoints, all `POST` with a JSON body and an
+`output_format` query param.
+
+### Common request body
+
+```jsonc
+{
+  "text": "Hello world.",
+
+  // Sesame-specific (optional):
+  "speaker_id": 0,
+  "temperature": 0.7,
+  "top_k": 100,
+  "max_audio_len_ms": 30000,
+
+  // ElevenLabs-parity, accepted but ignored:
+  "model_id": "eleven_turbo_v2",
+  "voice_settings": { "stability": 0.5 }
+}
+```
+
+Auth: pass `xi-api-key: <key>` header (or `?xi-api-key=<key>`) if the server
+was started with `--api-key`.
+
+### `POST /v1/text-to-speech/{voice_id}` — full body
+
+Generates the entire utterance, then sends the complete file. Use when you
+need a `Content-Length` header or you're saving to disk.
+
+```bash
+curl -X POST 'http://localhost:8080/v1/text-to-speech/default?output_format=mp3_44100_128' \
+    -H 'Content-Type: application/json' \
+    -d '{"text": "Hello from Sesame."}' \
+    --output out.mp3
+```
+
+### `POST /v1/text-to-speech/{voice_id}/stream` — chunked transfer
+
+Streams audio bytes as they're generated. Same content type as the full-body
+variant; just chunked. Use this for low-latency playback.
+
+```bash
+curl -X POST 'http://localhost:8080/v1/text-to-speech/default/stream?output_format=wav_24000' \
+    -H 'Content-Type: application/json' \
+    -d '{"text": "Hello from Sesame."}' \
+    | ffplay -nodisp -autoexit -
+```
+
+### `POST /v1/text-to-speech/{voice_id}/stream/with-timestamps` — SSE
+
+Server-Sent Events. Each `data:` line is a JSON object:
+
+```json
+{"audio_base64": "<...>", "alignment": null, "normalized_alignment": null}
+```
+
+`alignment` is **always `null`** — CSM-1B doesn't expose forced-alignment data.
+The endpoint exists for ElevenLabs API parity. If you need timestamps, use
+the streaming endpoint above and timestamp on the client.
+
+```bash
+curl -N -X POST 'http://localhost:8080/v1/text-to-speech/default/stream/with-timestamps?output_format=mp3_44100_128' \
+    -H 'Content-Type: application/json' \
+    -d '{"text": "Hello from Sesame."}'
+```
+
 ## WebSocket protocol
 
 ### Connect
@@ -83,7 +173,7 @@ ws://host:8080/v1/text-to-speech/{voice_id}/stream-input?output_format={format}
 ```
 
 Query params:
-- `output_format` — one of `pcm_16000`, `pcm_22050`, `pcm_24000`, `pcm_44100`, `ulaw_8000`. Default `pcm_24000` (CSM's native rate, no resampling).
+- `output_format` — see [Output formats](#output-formats). Default `pcm_24000`.
 - `xi-api-key` — required if server was started with `--api-key`.
 - `speaker_id`, `temperature`, `top_k`, `max_audio_len_ms` — optional generation overrides.
 

@@ -29,6 +29,8 @@ log = "0.4"
 env_logger = "0.11"
 
 rubato = "0.15"
+mp3lame-encoder = "0.2"
+bytes = "1.6"
 
 [features]
 default = []
