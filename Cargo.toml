@@ -8,6 +8,13 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+authors = ["Awais Khan <contact@awaiskhan.com.pk>"]
+license = "AGPL-3.0-only"
+repository = "https://github.com/Awaiskhan404/sesame-csm"
+homepage = "https://github.com/Awaiskhan404/sesame-csm"
+readme = "README.md"
+keywords = ["tts", "csm", "speech", "candle", "websocket"]
+categories = ["multimedia::audio", "science"]
 
 [profile.release]
 lto = "thin"

@@ -2,13 +2,21 @@
 name = "csm-ws"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Real-time WebSocket TTS server for Sesame CSM-1B, mirroring the ElevenLabs stream-input API. Built on axum and Candle."
 
 [[bin]]
 name = "csm-ws"
 path = "src/main.rs"
 
 [dependencies]
-csm-core = { path = "../csm-core" }
+csm-core = { version = "0.1.0", path = "../csm-core" }
 candle-core = { version = "0.9.1" }
 
 anyhow = "1.0"

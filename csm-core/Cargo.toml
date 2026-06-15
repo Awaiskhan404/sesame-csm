@@ -1,7 +1,15 @@
 [package]
 name = "csm-core"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Candle-based inference for Sesame CSM-1B text-to-speech (model + Mimi audio decoder). Derived from cartesia-one/csm.rs."
 
 [lib]
 name = "csm_rs"
